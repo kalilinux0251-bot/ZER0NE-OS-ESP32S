@@ -1,0 +1,760 @@
+#ifndef GMAN_IMPL_H
+#define GMAN_IMPL_H
+
+#include "gman.h"
+
+bool gmanActive = false;
+unsigned long gmanTime = 0;
+unsigned long gmanCheckTimer = 0;
+
+void gmanUpdate() {
+  if (millis() - gmanCheckTimer > 6000) {
+    gmanCheckTimer = millis();
+
+    if (!gmanActive && random(0, 120) == 1) {
+      gmanActive = true;
+      gmanTime = millis();
+    }
+  }
+
+  if (gmanActive && millis() - gmanTime > 2000) {
+    gmanActive = false;
+  }
+}
+
+void drawGmanOverlay() {
+  if (!gmanActive) return;
+
+  // Semi-transparent effect via inverted text area
+  display.fillRect(10, 20, 108, 24, SSD1306_BLACK);
+  display.drawRect(10, 20, 108, 24, SSD1306_WHITE);
+  display.setCursor(16, 26);
+  display.print(F("G-MAN: te observ..."));
+}
+
+#endif
+
+#ifndef INPUT_H
+#define INPUT_H
+
+#include <Arduino.h>
+
+#define BTN 0
+
+void handleInput();
+
+#endif
+
+#ifndef INPUT_IMPL_H
+#define INPUT_IMPL_H
+
+#include "input.h"
+#include "system_core.h"
+
+unsigned long pressTime = 0;
+bool pressed = false;
+
+void handleInput() {
+  if (digitalRead(BTN) == LOW) {
+    if (!pressed) {
+      pressed = true;
+      pressTime = millis();
+    }
+  } else {
+    if (pressed) {
+      unsigned long duration = millis() - pressTime;
+
+      if (duration < 500) {
+        // SHORT PRESS — navigate
+        if (state == STATE_MENU) {
+          menuIndex++;
+          if (menuIndex >= menuSize) menuIndex = 0;
+        } else {
+          // In-game: cycle game mode
+          gameId++;
+          if (gameId > 3) gameId = 0;
+        }
+      } else {
+        // LONG PRESS — select / back to menu
+        if (state == STATE_MENU) {
+          state = menuIndex;
+        } else {
+          state = STATE_MENU;
+        }
+      }
+
+      pressed = false;
+    }
+  }
+}
+
+#endif
+
+#ifndef INVENTORY_H
+#define INVENTORY_H
+
+#include <Arduino.h>
+
+extern char inventory[3][12];
+extern int invCount;
+
+void addItem(const char* item);
+void clearInventory();
+
+#endif
+
+#ifndef INVENTORY_IMPL_H
+#define INVENTORY_IMPL_H
+
+#include "inventory.h"
+#include <string.h>
+
+char inventory[3][12];
+int invCount = 0;
+
+void addItem(const char* item) {
+  if (invCount < 3 && item != nullptr) {
+    strncpy(inventory[invCount], item, 11);
+    inventory[invCount][11] = '\0';
+    invCount++;
+  }
+}
+
+void clearInventory() {
+  invCount = 0;
+  for (int i = 0; i < 3; i++) {
+    inventory[i][0] = '\0';
+  }
+}
+
+#endif
+
+#ifndef RENDER_H
+#define RENDER_H
+
+#include <Adafruit_SSD1306.h>
+#include <Arduino.h>
+
+extern Adafruit_SSD1306 display;
+
+void initRender();
+void renderFrame();
+
+// Draw functions (NO logic, only rendering)
+void drawMenu();
+void drawGame();
+void drawTerminal();
+void drawGman();
+
+#endif
+
+#ifndef RENDER_IMPL_H
+#define RENDER_IMPL_H
+
+#include "render.h"
+#include "system_core.h"
+#include "gman.h"
+
+void initRender() {
+  display.clearDisplay();
+  display.setTextSize(1);
+  display.setTextColor(SSD1306_WHITE);
+  display.display();
+}
+
+void renderFrame() {
+  display.clearDisplay();
+
+  switch(state) {
+    case STATE_MENU:     drawMenu();     break;
+    case STATE_GAME:     drawGame();     break;
+    case STATE_TERMINAL: drawTerminal(); break;
+    case STATE_BOSS:     drawGman();     break;
+  }
+
+  // G-Man overlay (drawn on top if active)
+  drawGmanOverlay();
+
+  display.display();
+}
+
+void drawMenu() {
+  display.setCursor(0, 0);
+  display.println(F("ZER0NE OS v2.0"));
+  display.println(F(""));
+
+  const char* items[] = {"MENU", "GAME", "TERM", "BOSS"};
+  for (int i = 0; i < menuSize; i++) {
+    if (i == menuIndex) {
+      display.print(F("> "));
+    } else {
+      display.print(F("  "));
+    }
+    display.println(items[i]);
+  }
+
+  display.println(F(""));
+  display.print(F("SCORE: "));
+  display.println(score);
+}
+
+void drawTerminal() {
+  display.setCursor(0, 0);
+  display.println(F("> ACCESSING..."));
+  display.println(F("  DATA CORRUPTED"));
+  display.println(F("  [REDACTED]"));
+  display.println(F(""));
+  display.println(F("  HOLD BTN TO EXIT"));
+}
+
+void drawGman() {
+  display.setCursor(0, 0);
+  display.println(F("G-MAN:"));
+  display.println(F("  nu trebuia..."));
+  display.println(F("  sa fii aici."));
+  display.println(F(""));
+  display.println(F("  HOLD BTN TO EXIT"));
+}
+
+#endif
+
+#ifndef SAVE_H
+#define SAVE_H
+
+#include <Arduino.h>
+#include <EEPROM.h>
+
+extern int score;
+extern int gameId;
+extern bool needSave;
+
+void loadData();
+void saveData();
+
+#endif
+
+#ifndef SAVE_IMPL_H
+#define SAVE_IMPL_H
+
+#include "save.h"
+
+bool needSave = false;
+
+void loadData() {
+  EEPROM.get(0, score);
+  EEPROM.get(4, gameId);
+
+  // Validate loaded data
+  if (score < 0 || score > 99999) score = 0;
+  if (gameId < 0 || gameId > 3) gameId = 0;
+}
+
+void saveData() {
+  if (!needSave) return;
+
+  EEPROM.put(0, score);
+  EEPROM.put(4, gameId);
+  EEPROM.commit();
+
+  needSave = false;
+}
+
+#endif
+
+#ifndef SYSTEM_CORE_H
+#define SYSTEM_CORE_H
+
+#include <Arduino.h>
+#include <Adafruit_SSD1306.h>
+
+extern Adafruit_SSD1306 display;
+
+// --- State Machine ---
+enum State {
+  STATE_MENU = 0,
+  STATE_GAME = 1,
+  STATE_TERMINAL = 2,
+  STATE_BOSS = 3,
+  STATE_COUNT
+};
+
+extern int state;
+extern int gameId;
+extern int score;
+extern int secretFlag;
+
+// --- Menu Navigation ---
+extern int menuIndex;
+extern const int menuSize;
+
+void updateSystem();
+
+// Update functions (logic only, NO drawing)
+void updateMenu();
+void updateGame();
+void updateTerminal();
+void updateGman();
+
+#endif
+
+#ifndef SYSTEM_CORE_IMPL_H
+#define SYSTEM_CORE_IMPL_H
+
+#include "system_core.h"
+
+int state = STATE_MENU;
+int gameId = 0;
+int score = 0;
+int secretFlag = 0;
+
+int menuIndex = 0;
+const int menuSize = 4;
+
+void updateSystem() {
+  switch(state) {
+    case STATE_MENU:   updateMenu();     break;
+    case STATE_GAME:   updateGame();     break;
+    case STATE_TERMINAL: updateTerminal(); break;
+    case STATE_BOSS:   updateGman();     break;
+  }
+}
+
+void updateMenu() {
+  // Menu logic: selection handled by input
+  // Nothing to update continuously
+}
+
+void updateTerminal() {
+  // Terminal logic placeholder
+}
+
+void updateGman() {
+  // Boss fight logic placeholder
+}
+
+#endif
+
+#include <Wire.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
+#include <EEPROM.h>
+
+// --- Headers ---
+#include "system_core.h"
+#include "input.h"
+#include "render.h"
+#include "games.h"
+#include "gman.h"
+#include "inventory.h"
+#include "glitch.h"
+#include "save.h"
+#include "easter_eggs.h"
+
+// --- Implementations ---
+#include "system_core_impl.h"
+#include "input_impl.h"
+#include "render_impl.h"
+#include "games_impl.h"
+#include "gman_impl.h"
+#include "inventory_impl.h"
+#include "glitch_impl.h"
+#include "save_impl.h"
+#include "easter_eggs_impl.h"
+
+// --- Global Display ---
+Adafruit_SSD1306 display(128, 64, &Wire, -1);
+
+void setup() {
+  pinMode(BTN, INPUT_PULLUP);
+
+  if (!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
+    // OLED init failed
+    for (;;);
+  }
+
+  display.clearDisplay();
+  display.setTextSize(1);
+  display.setTextColor(SSD1306_WHITE);
+  display.setCursor(0, 0);
+  display.println(F("ZER0NE OS v2.0"));
+  display.println(F("LOADING..."));
+  display.display();
+
+  EEPROM.begin(512);
+  loadData();
+  initRender();
+
+  delay(500);
+}
+
+void loop() {
+  handleInput();
+  updateSystem();
+  renderFrame();
+  gmanUpdate();
+  glitchUpdate();
+  checkEasterEggs();
+  saveData();
+  delay(16);  // ~60 FPS
+}
+
+#ifndef EASTER_EGGS_H
+#define EASTER_EGGS_H
+
+#include <Arduino.h>
+#include <Adafruit_SSD1306.h>
+
+extern Adafruit_SSD1306 display;
+
+extern int score;
+extern int gameId;
+extern int secretFlag;
+
+void checkEasterEggs();
+
+#endif
+
+#ifndef EASTER_EGGS_IMPL_H
+#define EASTER_EGGS_IMPL_H
+
+#include "easter_eggs.h"
+
+void checkEasterEggs() {
+  // Easter egg 1: High score in dodge
+  if (score > 100 && gameId == 2 && secretFlag == 0) {
+    secretFlag = 1;
+    // Could trigger special effect here
+  }
+
+  // Easter egg 2: Secret sequence (placeholder)
+  // if (stateSequence matches) { ... }
+}
+
+#endif
+
+#ifndef GAMES_H
+#define GAMES_H
+
+#include <Arduino.h>
+#include <Adafruit_SSD1306.h>
+
+extern Adafruit_SSD1306 display;
+
+extern int score;
+extern int gameId;
+extern bool needSave;
+
+void snake();
+void pong();
+void dodge();
+void reaction();
+
+void runGame();
+void updateGame();
+void drawGame();
+
+#endif
+
+#ifndef GAMES_IMPL_H
+#define GAMES_IMPL_H
+
+#include "games.h"
+
+// --- Snake mini-game ---
+#define SNAKE_MAX 20
+int snakeX[SNAKE_MAX], snakeY[SNAKE_MAX];
+int snakeLen = 3;
+int snakeDir = 0; // 0=right,1=down,2=left,3=up
+int foodX = 0, foodY = 0;
+bool snakeInit = false;
+unsigned long snakeTick = 0;
+
+void initSnake() {
+  snakeLen = 3;
+  snakeDir = 0;
+  for (int i = 0; i < snakeLen; i++) {
+    snakeX[i] = 10 - i;
+    snakeY[i] = 4;
+  }
+  foodX = random(2, 14);
+  foodY = random(2, 6);
+  snakeInit = true;
+}
+
+void snake() {
+  if (!snakeInit) initSnake();
+
+  if (millis() - snakeTick < 300) return;
+  snakeTick = millis();
+
+  // Move body
+  for (int i = snakeLen - 1; i > 0; i--) {
+    snakeX[i] = snakeX[i-1];
+    snakeY[i] = snakeY[i-1];
+  }
+
+  // Move head
+  switch(snakeDir) {
+    case 0: snakeX[0]++; break;
+    case 1: snakeY[0]++; break;
+    case 2: snakeX[0]--; break;
+    case 3: snakeY[0]--; break;
+  }
+
+  // Wrap
+  if (snakeX[0] >= 16) snakeX[0] = 0;
+  if (snakeX[0] < 0) snakeX[0] = 15;
+  if (snakeY[0] >= 8) snakeY[0] = 0;
+  if (snakeY[0] < 0) snakeY[0] = 7;
+
+  // Eat food
+  if (snakeX[0] == foodX && snakeY[0] == foodY) {
+    if (snakeLen < SNAKE_MAX) snakeLen++;
+    score += 10;
+    needSave = true;
+    foodX = random(2, 14);
+    foodY = random(2, 6);
+  }
+}
+
+void drawSnake() {
+  display.setCursor(0, 0);
+  display.print(F("SNAKE  SC:"));
+  display.println(score);
+
+  // Draw border
+  display.drawRect(0, 10, 128, 54, SSD1306_WHITE);
+
+  // Draw food
+  display.fillRect(foodX * 8, 10 + foodY * 6, 6, 4, SSD1306_WHITE);
+
+  // Draw snake
+  for (int i = 0; i < snakeLen; i++) {
+    display.fillRect(snakeX[i] * 8, 10 + snakeY[i] * 6, 6, 4, SSD1306_WHITE);
+  }
+}
+
+// --- Pong mini-game ---
+int ballX = 64, ballY = 32;
+int ballDX = 1, ballDY = 1;
+int paddleY = 24;
+bool pongInit = false;
+unsigned long pongTick = 0;
+
+void initPong() {
+  ballX = 64; ballY = 32;
+  ballDX = random(0, 2) ? 1 : -1;
+  ballDY = random(0, 2) ? 1 : -1;
+  paddleY = 24;
+  pongInit = true;
+}
+
+void pong() {
+  if (!pongInit) initPong();
+
+  if (millis() - pongTick < 50) return;
+  pongTick = millis();
+
+  ballX += ballDX;
+  ballY += ballDY;
+
+  if (ballY <= 0 || ballY >= 63) ballDY = -ballDY;
+  if (ballX >= 127) ballDX = -ballDX;
+
+  // Paddle collision
+  if (ballX <= 4 && ballY >= paddleY && ballY <= paddleY + 16) {
+    ballDX = -ballDX;
+    score += 5;
+    needSave = true;
+  }
+
+  // AI paddle follows ball
+  if (paddleY + 8 < ballY) paddleY += 2;
+  if (paddleY + 8 > ballY) paddleY -= 2;
+  if (paddleY < 0) paddleY = 0;
+  if (paddleY > 48) paddleY = 48;
+
+  // Miss = reset
+  if (ballX < 0) {
+    initPong();
+  }
+}
+
+void drawPong() {
+  display.setCursor(0, 0);
+  display.print(F("PONG  SC:"));
+  display.println(score);
+
+  display.drawRect(0, 10, 128, 54, SSD1306_WHITE);
+  display.fillCircle(ballX, 10 + ballY, 2, SSD1306_WHITE);
+  display.fillRect(2, 10 + paddleY, 3, 16, SSD1306_WHITE);
+  display.fillRect(123, 10 + paddleY, 3, 16, SSD1306_WHITE);
+}
+
+// --- Dodge mini-game ---
+int playerX = 64, playerY = 50;
+int obsX[3], obsY[3];
+bool dodgeInit = false;
+unsigned long dodgeTick = 0;
+
+void initDodge() {
+  playerX = 64; playerY = 50;
+  for (int i = 0; i < 3; i++) {
+    obsX[i] = random(10, 118);
+    obsY[i] = random(-30, 0);
+  }
+  dodgeInit = true;
+}
+
+void dodge() {
+  if (!dodgeInit) initDodge();
+
+  if (millis() - dodgeTick < 60) return;
+  dodgeTick = millis();
+
+  // Auto-move player toward center
+  if (playerX < 64) playerX += 1;
+  if (playerX > 64) playerX -= 1;
+
+  for (int i = 0; i < 3; i++) {
+    obsY[i] += 2;
+    if (obsY[i] > 64) {
+      obsY[i] = random(-20, -5);
+      obsX[i] = random(10, 118);
+      score += 2;
+      needSave = true;
+    }
+
+    // Collision
+    if (abs(playerX - obsX[i]) < 8 && abs(playerY - obsY[i]) < 8) {
+      score = max(0, score - 20);
+      needSave = true;
+      initDodge();
+      return;
+    }
+  }
+}
+
+void drawDodge() {
+  display.setCursor(0, 0);
+  display.print(F("DODGE  SC:"));
+  display.println(score);
+
+  display.drawRect(0, 10, 128, 54, SSD1306_WHITE);
+  display.fillRect(playerX - 4, playerY - 4, 8, 8, SSD1306_WHITE);
+
+  for (int i = 0; i < 3; i++) {
+    display.fillRect(obsX[i] - 4, obsY[i] - 4, 8, 8, SSD1306_WHITE);
+  }
+}
+
+// --- Reaction mini-game ---
+unsigned long reactStart = 0;
+bool reactWaiting = false;
+bool reactReady = false;
+bool reactionInit = false;
+
+void initReaction() {
+  reactWaiting = false;
+  reactReady = false;
+  reactionInit = true;
+}
+
+void reaction() {
+  if (!reactionInit) initReaction();
+
+  if (!reactWaiting && !reactReady) {
+    reactWaiting = true;
+    reactStart = millis() + random(2000, 5000);
+  }
+
+  if (reactWaiting && millis() >= reactStart) {
+    reactWaiting = false;
+    reactReady = true;
+  }
+}
+
+void drawReaction() {
+  display.setCursor(0, 0);
+  display.print(F("REACT  SC:"));
+  display.println(score);
+
+  display.setCursor(20, 30);
+  if (reactWaiting) {
+    display.println(F("WAIT..."));
+  } else if (reactReady) {
+    display.println(F("PRESS NOW!"));
+  } else {
+    display.println(F("READY?"));
+  }
+}
+
+// --- Main game update/draw ---
+void updateGame() {
+  switch(gameId) {
+    case 0: snake();    break;
+    case 1: pong();     break;
+    case 2: dodge();    break;
+    case 3: reaction(); break;
+  }
+}
+
+void drawGame() {
+  switch(gameId) {
+    case 0: drawSnake();    break;
+    case 1: drawPong();     break;
+    case 2: drawDodge();    break;
+    case 3: drawReaction(); break;
+  }
+}
+
+#endif
+
+#ifndef GLITCH_H
+#define GLITCH_H
+
+#include <Arduino.h>
+#include <Adafruit_SSD1306.h>
+
+extern Adafruit_SSD1306 display;
+
+void glitchUpdate();
+
+#endif
+
+#ifndef GLITCH_IMPL_H
+#define GLITCH_IMPL_H
+
+#include "glitch.h"
+
+void glitchUpdate() {
+  if (random(0, 200) == 1) {
+    int y = random(0, 64);
+    display.drawFastHLine(0, y, 128, SSD1306_WHITE);
+  }
+  if (random(0, 300) == 1) {
+    int x = random(0, 128);
+    display.drawFastVLine(x, 0, 64, SSD1306_WHITE);
+  }
+  if (random(0, 500) == 1) {
+    // Random pixel block
+    int x = random(0, 120);
+    int y = random(0, 56);
+    display.fillRect(x, y, random(4, 12), random(4, 12), SSD1306_WHITE);
+  }
+}
+
+#endif
+
+#ifndef GMAN_H
+#define GMAN_H
+
+#include <Arduino.h>
+#include <Adafruit_SSD1306.h>
+
+extern Adafruit_SSD1306 display;
+
+void gmanUpdate();
+void drawGmanOverlay();
+
+#endif
